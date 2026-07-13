@@ -44,6 +44,25 @@ namespace tvm {
 namespace runtime {
 namespace vm {
 
+// Browser pipeline-parallel override.
+//
+// In the Disco distributed runtime, a KV cache figures out which pipeline
+// group (stage) it belongs to from the Disco worker thread-local. In the
+// browser there is no Disco worker — each tab runs one stage in its own
+// process. To support compile-time-split pipeline models in the browser,
+// a tab can declare its (group_id, num_groups) via the
+// `vm.builtin.pp_set_group` builtin below; the KV cache constructor then
+// uses these instead of the (absent) Disco worker info.
+struct BrowserPPGroup {
+  int group_id = 0;
+  int num_groups = 1;
+  bool set = false;
+};
+static BrowserPPGroup* GetBrowserPPGroup() {
+  static BrowserPPGroup inst;
+  return &inst;
+}
+
 //-------------------------------------------
 // We keep the implementation private as
 // they may subject to future changes.
@@ -2479,6 +2498,17 @@ class PagedAttentionKVCacheObj : public AttentionKVCacheObj {
 TVM_FFI_STATIC_INIT_BLOCK() {
   namespace refl = tvm::ffi::reflection;
   refl::GlobalDef().def_packed(
+      "vm.builtin.pp_set_group", [](ffi::PackedArgs args, ffi::Any* rv) {
+        // (group_id, num_groups): declare this browser tab's pipeline
+        // group so the KV cache constructor partitions layers correctly
+        // without a Disco worker.
+        TVM_FFI_ICHECK_EQ(args.size(), 2);
+        BrowserPPGroup* g = GetBrowserPPGroup();
+        g->group_id = args[0].cast<int>();
+        g->num_groups = args[1].cast<int>();
+        g->set = true;
+      });
+  refl::GlobalDef().def_packed(
       "vm.builtin.paged_attention_kv_cache_create", [](ffi::PackedArgs args, ffi::Any* rv) {
         // Todo: cuda graph arg
         TVM_FFI_ICHECK(args.size() == 28 || args.size() == 29)
@@ -2491,6 +2521,11 @@ TVM_FFI_STATIC_INIT_BLOCK() {
           // In the Disco worker thread
           num_groups = disco_worker->num_groups;
           group_id = disco_worker->worker_id / (disco_worker->num_workers / num_groups);
+        } else if (GetBrowserPPGroup()->set) {
+          // Browser pipeline parallelism: the tab declared its group via
+          // vm.builtin.pp_set_group (no Disco worker in the browser).
+          num_groups = GetBrowserPPGroup()->num_groups;
+          group_id = GetBrowserPPGroup()->group_id;
         }
         TVM_FFI_ICHECK_EQ(layer_indptr_tuple.size(), num_groups + 1);
         int64_t num_layers = layer_indptr_tuple[group_id + 1] - layer_indptr_tuple[group_id];
