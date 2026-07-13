@@ -23,14 +23,21 @@ import typescript from '@rollup/plugin-typescript';
 
 export default {
   input: 'src/index.ts',
-  output: {
-    file: 'lib/index.js',
-    format: 'umd',
-    name: 'tvmjs',
-    exports: 'named',
-    globals: {'ws': 'ws',
-              'perf_hooks': 'perf_hooks'}
-  },
+  output: [
+    {
+      file: 'lib/index.js',
+      format: 'umd',
+      name: 'tvmjs',
+      exports: 'named',
+      globals: {'ws': 'ws',
+                'perf_hooks': 'perf_hooks'}
+    },
+    {
+      file: 'lib/index.mjs',
+      format: 'esm',
+      exports: 'named',
+    },
+  ],
   plugins: [
     ignore(["fs", "path", "crypto"]),
     resolve({ browser: true }),

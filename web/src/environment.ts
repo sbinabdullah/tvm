@@ -85,6 +85,12 @@ export class Environment implements LibraryProvider {
 
   private libProvider?: LibraryProvider;
 
+  /**
+   * The wasm instance, captured in start(). Used by TVMFFIHandleInitOnce
+   * to resolve init_func table indices to callable wasm functions.
+   */
+  private wasmInstance?: WebAssembly.Instance;
+
   constructor(
     importObject: Record<string, any> = {},
     logger: (msg: string) => void = console.log
@@ -103,6 +109,7 @@ export class Environment implements LibraryProvider {
 
   /** Mark the start of the instance. */
   start(inst: WebAssembly.Instance): void {
+    this.wasmInstance = inst;
     if (this.libProvider !== undefined) {
       this.libProvider.start(inst);
     }
@@ -135,6 +142,28 @@ export class Environment implements LibraryProvider {
     const newEnv = {
       "TVMFFIWasmSafeCall": wasmSafeCall,
       "TVMFFIWasmFunctionDeleter": wasmFunctionDeleter,
+      "TVMFFIHandleInitOnce": (
+        handleAddr: Pointer,
+        initFunc: Pointer
+      ): number => {
+        const inst = this.wasmInstance;
+        assert(inst !== undefined, "TVMFFIHandleInitOnce called before start()");
+        const memory = (inst!.exports as any).memory as WebAssembly.Memory;
+        const slot = handleAddr >> 2;
+        // fast path: already initialized
+        if (new Int32Array(memory.buffer)[slot] !== 0) return 0;
+        // resolve init_func from the indirect function table
+        const table = (inst!.exports as any).__indirect_function_table as WebAssembly.Table;
+        const fn = table.get(initFunc) as (result: Pointer) => number;
+        // init_func(void** result): writes the handle into *result.
+        const ret = fn(handleAddr);
+        if (ret !== 0) return ret;
+        if (new Int32Array(memory.buffer)[slot] === 0) {
+          this.logger("TVMFFIHandleInitOnce: init_func returned NULL handle");
+          return -1;
+        }
+        return 0;
+      },
       "__console_log": (msg: string): void => {
         this.logger(msg);
       }

@@ -17,6 +17,7 @@
     "machine learning"
   ],
   "main": "lib/index.js",
+  "module": "lib/index.js",
   "types": "lib/index.d.ts",
   "scripts": {
     "prepwasm": "make && python tests/python/prepare_test_libs.py",
